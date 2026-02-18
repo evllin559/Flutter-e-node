@@ -1,0 +1,224 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+void main() {
+  runApp(const UsersApp());
+}
+
+class UsersApp extends StatelessWidget {
+  const UsersApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Usuarios',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        useMaterial3: true,
+      ),
+      home: const UsersPage(),
+    );
+  }
+}
+
+class UsersPage extends StatefulWidget {
+  const UsersPage({super.key});
+
+  @override
+  State<UsersPage> createState() => _UsersPageState();
+}
+
+class _UsersPageState extends State<UsersPage> {
+  static const String baseUrl = 'http://localhost:3001';
+
+  bool _loading = true;
+  String? _error;
+  List<User> _users = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUsers();
+  }
+
+  Future<void> _fetchUsers() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/users'));
+      if (response.statusCode != 200) {
+        throw Exception('Erro ao buscar usuarios');
+      }
+      final List data = jsonDecode(response.body) as List;
+      _users = data.map((e) => User.fromJson(e)).toList();
+    } catch (e) {
+      _error = e.toString();
+    } finally {
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _openUserDialog({User? user}) async {
+    final nameController = TextEditingController(text: user?.name ?? '');
+    final emailController = TextEditingController(text: user?.email ?? '');
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(user == null ? 'Novo usuario' : 'Editar usuario'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Nome'),
+              ),
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(labelText: 'Email'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Salvar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != true) return;
+
+    final name = nameController.text.trim();
+    final email = emailController.text.trim();
+    if (name.isEmpty || email.isEmpty) {
+      _showSnack('Preencha nome e email');
+      return;
+    }
+
+    if (user == null) {
+      await _createUser(name, email);
+    } else {
+      await _updateUser(user.id, name, email);
+    }
+
+    if (mounted) {
+      await _fetchUsers();
+    }
+  }
+
+  Future<void> _createUser(String name, String email) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/users'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name, 'email': email}),
+    );
+    if (response.statusCode != 201) {
+      _showSnack('Erro ao criar usuario');
+    }
+  }
+
+  Future<void> _updateUser(int id, String name, String email) async {
+    final response = await http.put(
+      Uri.parse('$baseUrl/users/$id'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name, 'email': email}),
+    );
+    if (response.statusCode != 200) {
+      _showSnack('Erro ao atualizar usuario');
+    }
+  }
+
+  Future<void> _deleteUser(int id) async {
+    final response = await http.delete(Uri.parse('$baseUrl/users/$id'));
+    if (response.statusCode != 200) {
+      _showSnack('Erro ao remover usuario');
+      return;
+    }
+    await _fetchUsers();
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Usuarios'),
+        actions: [
+          IconButton(
+            onPressed: _fetchUsers,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _openUserDialog(),
+        child: const Icon(Icons.add),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Text(_error!))
+              : _users.isEmpty
+                  ? const Center(child: Text('Nenhum usuario'))
+                  : ListView.separated(
+                      itemCount: _users.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final user = _users[index];
+                        return ListTile(
+                          title: Text(user.name),
+                          subtitle: Text(user.email),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: () => _openUserDialog(user: user),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () => _deleteUser(user.id),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+    );
+  }
+}
+
+class User {
+  final int id;
+  final String name;
+  final String email;
+
+  User({required this.id, required this.name, required this.email});
+
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      id: json['id'] as int,
+      name: json['name'] as String,
+      email: json['email'] as String,
+    );
+  }
+}
